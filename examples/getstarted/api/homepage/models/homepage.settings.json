@@ -16,6 +16,18 @@
     "slug": {
       "type": "uid",
       "targetField": "title"
+    },
+    "header_picture": {
+      "model": "file",
+      "via": "related",
+      "plugin": "upload",
+      "required": false
+    },
+    "home_slider": {
+      "collection": "file",
+      "via": "related",
+      "plugin": "upload",
+      "required": false
     }
   }
 }

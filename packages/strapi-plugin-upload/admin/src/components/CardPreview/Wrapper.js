@@ -4,7 +4,7 @@ import PropTypes from 'prop-types';
 const Wrapper = styled.div`
   width: 100%;
   height: 100%;
-  position: absolute;
+  ${'' /* position: absolute; */}
   top: 0;
   left: 0;
   display: flex;

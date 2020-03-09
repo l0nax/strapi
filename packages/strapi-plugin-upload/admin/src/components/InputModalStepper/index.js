@@ -4,17 +4,20 @@ import { get } from 'lodash';
 import { Modal, ModalFooter, useGlobalContext, request } from 'strapi-helper-plugin';
 import { Button } from '@buffetjs/core';
 import pluginId from '../../pluginId';
-import ModalHeader from '../../components/ModalHeader';
+import ModalHeader from '../ModalHeader';
 import stepper from './utils/stepper';
 import init from './init';
 import reducer, { initialState } from './reducer';
 import getTrad from '../../utils/getTrad';
+import InputModalStepperProvider from '../../containers/InputModalStepperProvider';
 
-const ModalStepper = ({ isOpen, onToggle }) => {
+const ModalStepper = ({ isOpen, onToggle, onChange }) => {
   const { formatMessage } = useGlobalContext();
   const [reducerState, dispatch] = useReducer(reducer, initialState, init);
   const { currentStep, fileToEdit, filesToUpload } = reducerState.toJS();
-  const { Component, headers, next, prev, withBackButton } = stepper[currentStep];
+  const { Component, headerBreadcrumbs, next, prev, withBackButton, HeaderComponent } = stepper[
+    currentStep
+  ];
   const filesToUploadLength = filesToUpload.length;
   const toggleRef = useRef();
   toggleRef.current = onToggle;
@@ -103,9 +106,11 @@ const ModalStepper = ({ isOpen, onToggle }) => {
   const handleSubmitEditNewFile = e => {
     e.preventDefault();
 
-    dispatch({
-      type: 'ON_SUBMIT_EDIT_NEW_FILE',
-    });
+    console.log(e.target.value);
+
+    // dispatch({
+    //   type: 'ON_SUBMIT_EDIT_NEW_FILE',
+    // });
 
     goNext();
   };
@@ -195,54 +200,59 @@ const ModalStepper = ({ isOpen, onToggle }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onToggle={handleToggle} onClosed={handleClosed}>
-      {/* header title */}
-      <ModalHeader goBack={goBack} headers={headers} withBackButton={withBackButton} />
-      {/* body of the modal */}
-      {Component && (
-        <Component
-          addFilesToUpload={addFilesToUpload}
-          fileToEdit={fileToEdit}
-          filesToUpload={filesToUpload}
-          onChange={handleChange}
-          onClickCancelUpload={handleCancelFileToUpload}
-          onClickDeleteFileToUpload={handleClickDeleteFileToUpload}
-          onClickEditNewFile={handleGoToEditNewFile}
-          onGoToAddBrowseFiles={handleGoToAddBrowseFiles}
-          onSubmitEditNewFile={handleSubmitEditNewFile}
-          onToggle={handleToggle}
-          setCropResult={handleSetCropResult}
-          withBackButton={withBackButton}
+    <InputModalStepperProvider>
+      <Modal isOpen={isOpen} onToggle={handleToggle} onClosed={handleClosed}>
+        {/* header title */}
+        <ModalHeader
+          goBack={goBack}
+          HeaderComponent={HeaderComponent}
+          headerBreadcrumbs={headerBreadcrumbs}
         />
-      )}
+        {/* body of the modal */}
+        {Component && (
+          <Component
+            addFilesToUpload={addFilesToUpload}
+            fileToEdit={fileToEdit}
+            filesToUpload={filesToUpload}
+            onChange={handleChange}
+            onClickCancelUpload={handleCancelFileToUpload}
+            onClickDeleteFileToUpload={handleClickDeleteFileToUpload}
+            onClickEditNewFile={handleGoToEditNewFile}
+            onGoToAddBrowseFiles={handleGoToAddBrowseFiles}
+            onSubmitEditNewFile={handleSubmitEditNewFile}
+            onToggle={handleToggle}
+            setCropResult={handleSetCropResult}
+            withBackButton={withBackButton}
+          />
+        )}
 
-      <ModalFooter>
-        <section>
-          <Button type="button" color="cancel" onClick={handleToggle}>
-            {formatMessage({ id: 'app.components.Button.cancel' })}
-          </Button>
-          {currentStep === 'upload' && (
-            <Button type="button" color="success" onClick={handleUploadFiles}>
-              {formatMessage(
-                {
-                  id: getTrad(
-                    `modal.upload-list.footer.button.${
-                      filesToUploadLength > 1 ? 'plural' : 'singular'
-                    }`
-                  ),
-                },
-                { number: filesToUploadLength }
-              )}
+        <ModalFooter>
+          <section>
+            <Button type="button" color="cancel" onClick={handleToggle}>
+              {formatMessage({ id: 'app.components.Button.cancel' })}
             </Button>
-          )}
-          {currentStep === 'edit-new' && (
+            {currentStep === 'upload' && (
+              <Button type="button" color="success" onClick={handleUploadFiles}>
+                {formatMessage(
+                  {
+                    id: getTrad(
+                      `modal.upload-list.footer.button.${
+                        filesToUploadLength > 1 ? 'plural' : 'singular'
+                      }`
+                    ),
+                  },
+                  { number: filesToUploadLength }
+                )}
+              </Button>
+            )}
+            
             <Button color="success" type="button" onClick={handleSubmitEditNewFile}>
               {formatMessage({ id: 'form.button.finish' })}
             </Button>
-          )}
-        </section>
-      </ModalFooter>
-    </Modal>
+          </section>
+        </ModalFooter>
+      </Modal>
+    </InputModalStepperProvider>
   );
 };
 
