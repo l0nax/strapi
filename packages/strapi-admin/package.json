@@ -92,7 +92,7 @@
     "redux-saga": "^0.16.0",
     "reselect": "^4.0.0",
     "sanitize.css": "^4.1.0",
-    "sift": "13.1.10",
+    "sift": "13.3.5",
     "strapi-helper-plugin": "3.2.5",
     "strapi-utils": "3.2.5",
     "style-loader": "^0.23.1",
