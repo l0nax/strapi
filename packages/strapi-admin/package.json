@@ -94,7 +94,7 @@
     "reselect": "^4.0.0",
     "sanitize.css": "^4.1.0",
     "semver": "7.3.4",
-    "sift": "13.1.10",
+    "sift": "13.4.0",
     "strapi-helper-plugin": "3.4.0",
     "strapi-utils": "3.4.0",
     "style-loader": "^0.23.1",
