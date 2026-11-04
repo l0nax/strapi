@@ -1,0 +1,400 @@
+import * as React from 'react';
+
+import {
+  Box,
+  Button,
+  Field,
+  Flex,
+  Grid,
+  Main,
+  Textarea,
+  TextInput,
+  Typography,
+} from '@strapi/design-system';
+import { Check } from '@strapi/icons';
+import { format } from 'date-fns';
+import { Formik, Form, FormikHelpers } from 'formik';
+import { useIntl } from 'react-intl';
+import { useNavigate, useParams } from 'react-router-dom';
+import { styled } from 'styled-components';
+import * as yup from 'yup';
+
+import { SUPER_ADMIN_CODE } from '../../../../../../shared/utils/super-admin';
+import { Layouts } from '../../../../components/Layouts/Layout';
+import { Page } from '../../../../components/PageHelpers';
+import { useTypedSelector } from '../../../../core/store/hooks';
+import { useAuth } from '../../../../features/Auth';
+import { BackButton } from '../../../../features/BackButton';
+import { useNotification } from '../../../../features/Notifications';
+import { useTracking } from '../../../../features/Tracking';
+import { useAPIErrorHandler } from '../../../../hooks/useAPIErrorHandler';
+import {
+  useCreateRoleMutation,
+  useGetRolePermissionLayoutQuery,
+  useGetRolePermissionsQuery,
+  useUpdateRolePermissionsMutation,
+} from '../../../../services/users';
+import { isBaseQueryError } from '../../../../utils/baseQuery';
+import { translatedErrors } from '../../../../utils/translatedErrors';
+
+import { Permissions, PermissionsAPI } from './components/Permissions';
+import { isPermissionWithinCeiling, toEnforcedPermissions } from './utils/createPermissionChecker';
+import { isPermissionsCeilingError } from './utils/isPermissionsCeilingError';
+
+/* -------------------------------------------------------------------------------------------------
+ * CreatePage
+ * -----------------------------------------------------------------------------------------------*/
+
+const CREATE_SCHEMA = yup.object().shape({
+  name: yup.string().required(translatedErrors.required.id),
+  description: yup.string().required(translatedErrors.required.id),
+});
+
+/**
+ * TODO: be nice if we could just infer this from the schema
+ */
+interface CreateRoleFormValues {
+  name: string;
+  description: string;
+}
+
+/**
+ * TODO: this whole section of the app needs refactoring. Using a ref to
+ * manage the state of the child is nonsensical.
+ */
+const CreatePage = () => {
+  const { id } = useParams();
+  const { toggleNotification } = useNotification();
+  const { formatMessage } = useIntl();
+  const navigate = useNavigate();
+  const permissionsRef = React.useRef<PermissionsAPI>(null);
+  const [hasLocaleValidationErrors, setHasLocaleValidationErrors] = React.useState(false);
+  const { trackUsage } = useTracking();
+  const {
+    _unstableFormatAPIError: formatAPIError,
+    _unstableFormatValidationErrors: formatValidationErrors,
+  } = useAPIErrorHandler();
+
+  /**
+   * An admin cannot grant a permission they do not hold themselves, so the permissions
+   * tree is restricted to the current user's own permissions unless they are a super admin.
+   */
+  const currentUserPermissions = useAuth('CreatePage', (state) => state.permissions);
+  const currentUser = useAuth('CreatePage', (state) => state.user);
+  const isCurrentUserSuperAdmin =
+    currentUser?.roles.some((role) => role.code === SUPER_ADMIN_CODE) ?? false;
+  const userPermissions = isCurrentUserSuperAdmin ? undefined : currentUserPermissions;
+
+  const { isLoading: isLoadingPermissionsLayout, currentData: permissionsLayout } =
+    useGetRolePermissionLayoutQuery({
+      /**
+       * Role here is a query param so if there's no role we pass an empty string
+       * which returns us a default layout.
+       */
+      role: id ?? '',
+    });
+
+  /**
+   * We need this so if we're cloning a role, we can fetch
+   * the current permissions that role has.
+   */
+  const { currentData: rolePermissions, isLoading: isLoadingRole } = useGetRolePermissionsQuery(
+    {
+      id: id!,
+    },
+    {
+      skip: !id,
+      refetchOnMountOrArgChange: true,
+    }
+  );
+
+  /**
+   * A duplicated role can only carry what the user may grant: the new role has no permissions
+   * yet, so nothing is exempt from the ceiling, and the server rejects the whole update when one
+   * copied permission is outside it. Permissions outside it are left unticked.
+   */
+  const permissionsToCopy = React.useMemo(() => {
+    if (userPermissions === undefined) {
+      return rolePermissions;
+    }
+
+    // The form is not shown before the layout loads
+    if (permissionsLayout === undefined) {
+      return undefined;
+    }
+
+    const heldPermissions = toEnforcedPermissions(userPermissions, permissionsLayout);
+
+    return rolePermissions?.filter((permission) =>
+      isPermissionWithinCeiling(heldPermissions, permission)
+    );
+  }, [permissionsLayout, rolePermissions, userPermissions]);
+
+  const [createRole] = useCreateRoleMutation();
+  const [updateRolePermissions] = useUpdateRolePermissionsMutation();
+
+  const handleCreateRoleSubmit = async (
+    data: CreateRoleFormValues,
+    formik: FormikHelpers<CreateRoleFormValues>
+  ) => {
+    // Re-check via ref on submit: state may lag behind the latest matrix edits when save is clicked quickly
+    if (permissionsRef.current?.hasLocaleValidationErrors()) {
+      return;
+    }
+
+    try {
+      if (id) {
+        trackUsage('willDuplicateRole');
+      } else {
+        trackUsage('willCreateNewRole');
+      }
+
+      const res = await createRole(data);
+
+      if ('error' in res) {
+        if (isBaseQueryError(res.error) && res.error.name === 'ValidationError') {
+          formik.setErrors(formatValidationErrors(res.error));
+        } else {
+          toggleNotification({
+            type: 'danger',
+            message: formatAPIError(res.error),
+          });
+        }
+
+        return;
+      }
+
+      const { permissionsToSend } = permissionsRef.current?.getPermissions() ?? {};
+
+      if (res.data.id && Array.isArray(permissionsToSend) && permissionsToSend.length > 0) {
+        const updateRes = await updateRolePermissions({
+          id: res.data.id,
+          permissions: permissionsToSend,
+        });
+
+        if ('error' in updateRes) {
+          if (isBaseQueryError(updateRes.error) && updateRes.error.name === 'ValidationError') {
+            formik.setErrors(formatValidationErrors(updateRes.error));
+          } else {
+            toggleNotification({
+              type: 'danger',
+              message: isPermissionsCeilingError(updateRes.error)
+                ? formatMessage({
+                    id: 'Settings.permissions.cannot-grant-unheld.error',
+                    defaultMessage:
+                      "Some permissions could not be saved because you don't have them yourself.",
+                  })
+                : formatAPIError(updateRes.error),
+            });
+          }
+
+          return;
+        }
+      }
+
+      toggleNotification({
+        type: 'success',
+        message: formatMessage({ id: 'Settings.roles.created', defaultMessage: 'created' }),
+      });
+
+      navigate(`../roles/${res.data.id.toString()}`, { replace: true });
+    } catch {
+      toggleNotification({
+        type: 'danger',
+        message: formatMessage({ id: 'notification.error', defaultMessage: 'An error occurred' }),
+      });
+    }
+  };
+
+  // The permissions form reads its initial permissions once, when it mounts
+  if (isLoadingPermissionsLayout || isLoadingRole || !permissionsLayout) {
+    return <Page.Loading />;
+  }
+
+  return (
+    <Main>
+      <Page.Title>
+        {formatMessage(
+          { id: 'Settings.PageTitle', defaultMessage: 'Settings - {name}' },
+          {
+            name: 'Roles',
+          }
+        )}
+      </Page.Title>
+      <Formik
+        initialValues={
+          {
+            name: '',
+            description: `${formatMessage({
+              id: 'Settings.roles.form.created',
+              defaultMessage: 'Created',
+            })} ${format(new Date(), 'PPP')}`,
+          } satisfies CreateRoleFormValues
+        }
+        onSubmit={handleCreateRoleSubmit}
+        validationSchema={CREATE_SCHEMA}
+        validateOnChange={false}
+      >
+        {({ values, errors, handleReset, handleChange, isSubmitting }) => (
+          <Form>
+            <>
+              <Layouts.Header
+                primaryAction={
+                  <Flex width="100%" gap={2}>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        handleReset();
+                        permissionsRef.current?.resetForm();
+                      }}
+                      fullWidth
+                    >
+                      {formatMessage({
+                        id: 'app.components.Button.reset',
+                        defaultMessage: 'Reset',
+                      })}
+                    </Button>
+                    <Button
+                      type="submit"
+                      loading={isSubmitting}
+                      disabled={hasLocaleValidationErrors}
+                      startIcon={<Check />}
+                      fullWidth
+                    >
+                      {formatMessage({
+                        id: 'global.save',
+                        defaultMessage: 'Save',
+                      })}
+                    </Button>
+                  </Flex>
+                }
+                title={formatMessage({
+                  id: 'Settings.roles.create.title',
+                  defaultMessage: 'Create a role',
+                })}
+                subtitle={formatMessage({
+                  id: 'Settings.roles.create.description',
+                  defaultMessage: 'Define the rights given to the role',
+                })}
+                navigationAction={
+                  // The back link for mobile works differently; it is placed higher up in the DOM.
+                  <Box display={{ initial: 'none', medium: 'block' }}>
+                    <BackButton fallback="../roles" />
+                  </Box>
+                }
+              />
+              <Layouts.Content>
+                <Flex direction="column" alignItems="stretch" gap={6}>
+                  <Box background="neutral0" padding={6} shadow="filterShadow" hasRadius>
+                    <Flex direction="column" alignItems="stretch" gap={4}>
+                      <Flex justifyContent="space-between">
+                        <Box>
+                          <Box>
+                            <Typography fontWeight="bold">
+                              {formatMessage({
+                                id: 'global.details',
+                                defaultMessage: 'Details',
+                              })}
+                            </Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="pi" textColor="neutral600">
+                              {formatMessage({
+                                id: 'Settings.roles.form.description',
+                                defaultMessage: 'Name and description of the role',
+                              })}
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <UsersRoleNumber>
+                          {formatMessage(
+                            {
+                              id: 'Settings.roles.form.button.users-with-role',
+                              defaultMessage:
+                                '{number, plural, =0 {# users} one {# user} other {# users}} with this role',
+                            },
+                            { number: 0 }
+                          )}
+                        </UsersRoleNumber>
+                      </Flex>
+                      <Grid.Root gap={4}>
+                        <Grid.Item m={6} xs={12} direction="column" alignItems="stretch">
+                          <Field.Root
+                            name="name"
+                            error={errors.name && formatMessage({ id: errors.name })}
+                            required
+                          >
+                            <Field.Label>
+                              {formatMessage({
+                                id: 'global.name',
+                                defaultMessage: 'Name',
+                              })}
+                            </Field.Label>
+                            <TextInput type="text" onChange={handleChange} value={values.name} />
+                            <Field.Error />
+                          </Field.Root>
+                        </Grid.Item>
+                        <Grid.Item m={6} xs={12} direction="column" alignItems="stretch">
+                          <Field.Root
+                            name="description"
+                            error={errors.description && formatMessage({ id: errors.description })}
+                          >
+                            <Field.Label>
+                              {formatMessage({
+                                id: 'global.description',
+                                defaultMessage: 'Description',
+                              })}
+                            </Field.Label>
+                            <Textarea onChange={handleChange} value={values.description} />
+                          </Field.Root>
+                        </Grid.Item>
+                      </Grid.Root>
+                    </Flex>
+                  </Box>
+                  <Box shadow="filterShadow" hasRadius>
+                    <Permissions
+                      isFormDisabled={false}
+                      onLocaleValidationChange={setHasLocaleValidationErrors}
+                      ref={permissionsRef}
+                      permissions={permissionsToCopy}
+                      layout={permissionsLayout}
+                      userPermissions={userPermissions}
+                    />
+                  </Box>
+                </Flex>
+              </Layouts.Content>
+            </>
+          </Form>
+        )}
+      </Formik>
+    </Main>
+  );
+};
+
+const UsersRoleNumber = styled.div`
+  border: 1px solid ${({ theme }) => theme.colors.primary200};
+  background: ${({ theme }) => theme.colors.primary100};
+  padding: ${({ theme }) => `${theme.spaces[2]} ${theme.spaces[4]}`};
+  color: ${({ theme }) => theme.colors.primary600};
+  border-radius: ${({ theme }) => theme.borderRadius};
+  font-size: 1.2rem;
+  font-weight: bold;
+`;
+
+/* -------------------------------------------------------------------------------------------------
+ * ProtectedCreatePage
+ * -----------------------------------------------------------------------------------------------*/
+
+const ProtectedCreatePage = () => {
+  const permissions = useTypedSelector(
+    (state) => state.admin_app.permissions.settings?.roles.create
+  );
+
+  return (
+    <Page.Protect permissions={permissions}>
+      <CreatePage />
+    </Page.Protect>
+  );
+};
+
+export { CreatePage, ProtectedCreatePage };

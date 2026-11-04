@@ -1,0 +1,54 @@
+'use strict';
+
+module.exports = {
+  routes: [
+    {
+      method: 'POST',
+      path: '/config/ratelimit/enable',
+      handler: 'config.rateLimitEnable',
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: 'POST',
+      path: '/config/permissions/prune',
+      handler: 'config.permissionsPrune',
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: 'POST',
+      path: '/config/permissions/resync-super-admin',
+      handler: 'config.permissionsResyncSuperAdmin',
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: 'POST',
+      path: '/config/resettransfertoken',
+      handler: 'config.resetTransferToken',
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: 'POST',
+      path: '/config/reset-admin-fixture',
+      handler: 'config.resetAdminFixture',
+      config: {
+        auth: false,
+      },
+    },
+    {
+      method: 'POST',
+      path: '/config/reset-fixture',
+      handler: 'config.resetFixture',
+      config: {
+        auth: false,
+      },
+    },
+  ],
+};

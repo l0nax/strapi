@@ -1,0 +1,133 @@
+import type { Ability } from '@casl/ability';
+
+import permissionCheckerService from '../permission-checker';
+
+const createPermissionsManagerMock = () => ({
+  toSubject: (_entity: any, model: string) => model,
+  sanitizeOutput: jest.fn((data: any) => data),
+  sanitizeQuery: jest.fn((query: any) => query),
+  sanitizeInput: jest.fn((data: any) => data),
+  validateQuery: jest.fn((query: any) => query),
+  validateInput: jest.fn((data: any) => data),
+  addPermissionsQueryTo: jest.fn((query: any) => query),
+});
+
+const createStrapiMock = (permissionsManager = createPermissionsManagerMock()) => ({
+  service: jest.fn(() => ({
+    createPermissionsManager: jest.fn(() => permissionsManager),
+    actionProvider: {
+      unstable_aliases: jest.fn(() => []),
+    },
+  })),
+});
+
+describe('permission-checker', () => {
+  test('requiresEntity is true when rules have conditions', () => {
+    const strapi = createStrapiMock();
+    const userAbility = {
+      rulesFor: jest.fn(() => [{ conditions: { locale: 'en' } }]),
+      can: jest.fn(),
+      cannot: jest.fn(),
+    } as unknown as Ability;
+
+    const permissionChecker = permissionCheckerService({ strapi } as any).create({
+      userAbility,
+      model: 'api::article.article',
+    });
+
+    expect(permissionChecker.requiresEntity('read')).toBe(true);
+  });
+
+  test('requiresEntity is false when rules have no conditions', () => {
+    const strapi = createStrapiMock();
+    const userAbility = {
+      rulesFor: jest.fn(() => [{ conditions: {} }, {}]),
+      can: jest.fn(),
+      cannot: jest.fn(),
+    } as unknown as Ability;
+
+    const permissionChecker = permissionCheckerService({ strapi } as any).create({
+      userAbility,
+      model: 'api::article.article',
+    });
+
+    expect(permissionChecker.requiresEntity('read')).toBe(false);
+  });
+
+  test.each([
+    ['read', 'plugin::content-manager.explorer.read'],
+    ['create', 'plugin::content-manager.explorer.create'],
+    ['update', 'plugin::content-manager.explorer.update'],
+    ['delete', 'plugin::content-manager.explorer.delete'],
+    ['publish', 'plugin::content-manager.explorer.publish'],
+    ['unpublish', 'plugin::content-manager.explorer.publish'],
+    ['discard', 'plugin::content-manager.explorer.update'],
+  ] as const)(
+    'sanitizedQuery.%s sanitizes and restricts the query for %s',
+    async (name, action) => {
+      const permissionsManager = createPermissionsManagerMock();
+      const strapi = createStrapiMock(permissionsManager);
+      const userAbility = { rulesFor: jest.fn(() => []) } as unknown as Ability;
+      const query = { page: '1', sort: 'title:asc' };
+
+      const permissionChecker = permissionCheckerService({ strapi } as any).create({
+        userAbility,
+        model: 'api::article.article',
+      });
+
+      await permissionChecker.sanitizedQuery[name](query);
+
+      expect(permissionsManager.sanitizeQuery).toHaveBeenCalledWith(query, {
+        subject: 'api::article.article',
+        action,
+      });
+      expect(permissionsManager.addPermissionsQueryTo).toHaveBeenCalledWith(query, action);
+    }
+  );
+
+  test('sanitizedQuery defaults to the read action', async () => {
+    const permissionsManager = createPermissionsManagerMock();
+    const strapi = createStrapiMock(permissionsManager);
+    const userAbility = { rulesFor: jest.fn(() => []) } as unknown as Ability;
+    const query = {};
+
+    const permissionChecker = permissionCheckerService({ strapi } as any).create({
+      userAbility,
+      model: 'api::article.article',
+    });
+
+    await permissionChecker.sanitizedQuery(query);
+
+    expect(permissionsManager.sanitizeQuery).toHaveBeenCalledWith(query, {
+      subject: 'api::article.article',
+      action: 'plugin::content-manager.explorer.read',
+    });
+    expect(permissionsManager.addPermissionsQueryTo).toHaveBeenCalledWith(
+      query,
+      'plugin::content-manager.explorer.read'
+    );
+  });
+
+  test('sanitizedQuery accepts the action as a plain string', async () => {
+    const permissionsManager = createPermissionsManagerMock();
+    const strapi = createStrapiMock(permissionsManager);
+    const userAbility = { rulesFor: jest.fn(() => []) } as unknown as Ability;
+    const query = {};
+
+    const permissionChecker = permissionCheckerService({ strapi } as any).create({
+      userAbility,
+      model: 'api::article.article',
+    });
+
+    await permissionChecker.sanitizedQuery(query, 'plugin::content-manager.explorer.delete');
+
+    expect(permissionsManager.sanitizeQuery).toHaveBeenCalledWith(query, {
+      subject: 'api::article.article',
+      action: 'plugin::content-manager.explorer.delete',
+    });
+    expect(permissionsManager.addPermissionsQueryTo).toHaveBeenCalledWith(
+      query,
+      'plugin::content-manager.explorer.delete'
+    );
+  });
+});

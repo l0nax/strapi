@@ -1,0 +1,121 @@
+import os from 'os';
+import _ from 'lodash';
+
+import { Scope, StderrError } from '../types';
+
+type TrackError = Error | string | StderrError;
+
+// Add properties from the package.json strapi key in the metadata
+function addPackageJsonStrapiMetadata(metadata: Record<string, unknown>, scope: Scope) {
+  const { packageJsonStrapi = {} } = scope;
+
+  return _.defaults(metadata, packageJsonStrapi);
+}
+
+const boolToString = (value: boolean | undefined) => (value === true).toString();
+
+const getProperties = (scope: Scope, error?: TrackError) => {
+  const eventProperties = {
+    error: typeof error === 'string' ? error : error && error.message,
+    invocation: scope.invocation,
+    agentName: scope.agentName,
+  };
+
+  const userProperties = {
+    os: os.type(),
+    osPlatform: os.platform(),
+    osArch: os.arch(),
+    osRelease: os.release(),
+    nodeVersion: process.versions.node,
+  };
+
+  const groupProperties = {
+    version: scope.strapiVersion,
+    docker: scope.docker,
+    useYarn: scope.packageManager === 'yarn',
+    packageManager: scope.packageManager,
+    /** @deprecated */
+    useTypescriptOnServer: boolToString(scope.useTypescript),
+    /** @deprecated */
+    useTypescriptOnAdmin: boolToString(scope.useTypescript),
+    useTypescript: boolToString(scope.useTypescript),
+    isHostedOnStrapiCloud: process.env.STRAPI_HOSTING === 'strapi.cloud',
+    noRun: boolToString(scope.runApp),
+    projectId: scope.uuid,
+    useExample: boolToString(scope.useExample),
+    gitInit: boolToString(scope.gitInit),
+    installDependencies: boolToString(scope.installDependencies),
+  };
+
+  return {
+    eventProperties,
+    userProperties,
+    groupProperties: addPackageJsonStrapiMetadata(groupProperties, scope),
+  };
+};
+
+// Same values as `STRAPI_TELEMETRY_DISABLED` in @strapi/core
+export const isTelemetryDisabled = () =>
+  ['1', 'true'].includes((process.env.STRAPI_TELEMETRY_DISABLED ?? '').toLowerCase());
+
+function trackEvent(event: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV === 'test' || isTelemetryDisabled()) {
+    return;
+  }
+
+  const analyticsUrl = process.env.STRAPI_ANALYTICS_URL || 'https://analytics.strapi.io';
+
+  try {
+    return fetch(`${analyticsUrl}/api/v2/track`, {
+      method: 'POST',
+      body: JSON.stringify({
+        event,
+        ...payload,
+      }),
+      signal: AbortSignal.timeout(1000),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Strapi-Event': event,
+      },
+    }).catch(() => {});
+  } catch {
+    /** ignore errors */
+    return Promise.resolve();
+  }
+}
+
+export async function trackError({ scope, error }: { scope: Scope; error?: TrackError }) {
+  const properties = getProperties(scope, error);
+
+  try {
+    return await trackEvent('didNotCreateProject', {
+      deviceId: scope.installId,
+      ...properties,
+    });
+  } catch {
+    /** ignore errors */
+    return Promise.resolve();
+  }
+}
+
+export async function trackUsage({
+  event,
+  scope,
+  error,
+}: {
+  event: string;
+  scope: Scope;
+  error?: TrackError;
+}) {
+  const properties = getProperties(scope, error);
+
+  try {
+    return await trackEvent(event, {
+      deviceId: scope.installId,
+      ...properties,
+    });
+  } catch {
+    /** ignore errors */
+    return Promise.resolve();
+  }
+}
